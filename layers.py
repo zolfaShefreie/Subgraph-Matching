@@ -7,6 +7,15 @@ class GNNBaseLayer(layers.Layer):
 
     def __init__(self, hidden_units, dropout_rate=0.2, aggregation_type="mean", combination_type="concat",
                  normalize=False, *args, **kwargs):
+        """
+        :param hidden_units: units for dense layers
+        :param dropout_rate:
+        :param aggregation_type: how to aggregate neighbor messages.it can be sum, mean, and max.
+        :param combination_type: how to combine source node and neighbor messages it can be concat, gru, and add
+        :param normalize: normalize the output or not
+        :param args:
+        :param kwargs:
+        """
         super(GNNBaseLayer, self).__init__(*args, **kwargs)
 
         self.aggregation_type = aggregation_type
@@ -15,7 +24,7 @@ class GNNBaseLayer(layers.Layer):
 
         self.base_message_create = self.create_gnn_layers(hidden_units, dropout_rate)
         self.edge_transformer = self.create_edge_transformer_layers(hidden_units=hidden_units)
-        if self.combination_type == "gated":
+        if self.combination_type == "gru":
             self.update_fn = layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
                                         dropout=dropout_rate, return_state=True, recurrent_dropout=dropout_rate)
         else:
@@ -43,13 +52,17 @@ class GNNBaseLayer(layers.Layer):
         return keras.Sequential(gnn_layers, name=name)
 
     @staticmethod
-    def create_edge_transformer_layers(hidden_units):
+    def create_edge_transformer_layers(hidden_units, name=None):
         """
         create layers for edge feature transformation
         :param hidden_units:
+        :param name: name of box
         :return:
         """
-        return layers.Dense(hidden_units[0], activation=tf.nn.gelu)
+        layers = list()
+        for units in hidden_units:
+            layers.append(layers.Dense(units, activation=tf.nn.gelu))
+        return keras.Sequential(layers, name=name)
 
     def prepare_neighbour_messages(self, node_representations, edge_features=None):
         """
