@@ -204,6 +204,9 @@ class RowChooserLayer(tf.keras.layers.Layer):
             return pre_shape[0], -1, pre_shape[2]
         if len(pre_shape) == 2:
             return -1, pre_shape[-1]
+    
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
 
     def call(self, inputs, *args, **kwargs):
         """
