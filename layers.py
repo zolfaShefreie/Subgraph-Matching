@@ -3,7 +3,7 @@ from tensorflow.keras import layers
 from tensorflow import keras
 
 
-class GNNBaseLayer(layers.Layer):
+class GNNBaseLayer(tf.keras.layers.Layer):
 
     def __init__(self, hidden_units, dropout_rate=0.2, aggregation_type="mean", combination_type="concat",
                  normalize=False, *args, **kwargs):
@@ -59,9 +59,9 @@ class GNNBaseLayer(layers.Layer):
         :param name: name of box
         :return:
         """
-        layers = list()
+        edge_embed_layers = list()
         for units in hidden_units:
-            layers.append(layers.Dense(units, activation=tf.nn.gelu))
+            edge_embed_layers.append(layers.Dense(units, activation=tf.nn.gelu))
         return keras.Sequential(layers, name=name)
 
     def prepare_neighbour_messages(self, node_representations, edge_features=None):
@@ -126,7 +126,10 @@ class GNNBaseLayer(layers.Layer):
             node_embeddings = tf.nn.l2_normalize(node_embeddings, axis=-1)
         return node_embeddings
 
-    def call(self, inputs):
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
+
+    def call(self, inputs, *args, **kwargs):
         """
         Process the inputs to produce the graph_embedding.
         :param inputs: graph => tuple with tree elements
@@ -142,3 +145,80 @@ class GNNBaseLayer(layers.Layer):
         neighbour_messages = self.prepare_neighbour_messages(neighbour_representations, edge_features)
         aggregated_messages = self.aggregate(node_indices, neighbour_messages)
         return self.update(node_representations, aggregated_messages)
+
+
+class ThresholdLayer(tf.keras.layers.Layer):
+
+    def __init__(self, *args, **kwargs):
+        super(ThresholdLayer, self).__init__(*args, **kwargs)
+
+    def build(self, input_shape):
+        self.kernel = self.add_weight(name="threshold", shape=(1,), initializer="uniform",
+                                      trainable=True)
+        super(ThresholdLayer, self).build(input_shape)
+
+    def call(self, x):
+        """
+        :param x:
+        :return:
+        """
+        return keras.backend.sigmoid(100 * (x - self.kernel))
+
+    def compute_output_shape(self, input_shape):
+        return input_shape
+
+
+class BinaryLayer(tf.keras.layers.Layer):
+    """
+    binary output with trainable threshold
+    """
+
+    def __init__(self, *args, **kwargs):
+        super(BinaryLayer, self).__init__(*args, **kwargs)
+        self.kernel = self.add_weight(name="threshold", shape=(1,), initializer="uniform",
+                                      trainable=True)
+
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
+
+    def call(self, inputs, *args, **kwargs):
+        return keras.backend.cast(keras.backend.greater(inputs, self.kernel), keras.backend.floatx())
+
+
+class RowChooserLayer(tf.keras.layers.Layer):
+
+    def __init__(self, units, *args, **kwargs):
+        """
+        :param units: units of Dense it must be the maximum length in input
+        :param args:
+        :param kwargs:
+        """
+        super(RowChooserLayer, self).__init__(*args, **kwargs)
+
+        self.binary_maker = BinaryLayer()
+        self.dense_layer = tf.keras.layers.Dense(units, activation="sigmoid")
+    
+    @staticmethod
+    def get_new_shape(pre_shape):
+        if len(pre_shape) == 3:
+            return pre_shape[0], -1, pre_shape[2]
+        if len(pre_shape) == 2:
+            return -1, pre_shape[-1]
+
+    def call(self, inputs, *args, **kwargs):
+        """
+        :param inputs:
+        :param args:
+        :param kwargs:
+        :return:
+        """
+        x = self.dense_layer(inputs)
+        row_index = self.binary_maker(x)
+        row_index = tf.expand_dims(row_index, -1)
+        row_index = tf.repeat(row_index, repeats=inputs.shape[-1], axis=-1)
+        bool_index = tf.math.not_equal(row_index, 0.0)
+        shape = tf.shape(inputs)
+        output = inputs[bool_index]
+        return tf.reshape(output, self.get_new_shape(shape))
+
+
