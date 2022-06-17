@@ -2,14 +2,15 @@ import os
 import requests
 import ast
 import networkx as nx
+import gzip
 
 
 def download_file(url: str, file_path: str):
     """
         download file and save on file path
     """
-    file_content = requests.get(url).text
-    file = open(file_path, 'w')
+    file_content = requests.get(url).content
+    file = open(file_path, 'wb')
     file.write(file_content)
     file.close()
 
@@ -36,6 +37,8 @@ class Dataset:
         """
         if dataset_name in self.DATASET_LINKS:
             self.dataset_name = dataset_name
+            if not os.path.exists(self.PATH):
+                os.mkdir(self.PATH)
             self.info = self._get_dataset_info(dataset_name)
         else:
             raise Exception("Dataset Not Found")
@@ -101,8 +104,54 @@ class Dataset:
             "edges": {(item[0], item[1]): item[2] for item in list(graph.edges(data=True))}
         }
 
-    def load_dataset(self):
-        pass
+    @classmethod
+    def _graph_dict_format(cls, graph_dict: dict) -> (list, list, list):
+        """
+        format the graph data
+        convert to (nodes, edges, edges_attr):
+            nodes: list of node attributes
+            edges: list of edges (node_id, node_id)
+            edges_attr: list of edge attributes
+        :param graph_dict:
+        :return:
+        """
 
-    def load_generator(self):
-        pass
+        nodes = [None for i in range(len(graph_dict['nodes']))]
+        for node_id, node_attr in graph_dict['nodes'].items():
+            nodes[node_id] = list(node_attr.values())
+
+        edges, edges_attr = list(), list()
+        for edge, attr in graph_dict['edges'].items():
+            edges.append(edge)
+            edges_attr.append(list(attr.values()))
+
+        return nodes, edges, edges_attr
+
+    def load_dataset(self) -> (list, list):
+        """
+        load dataset from file and preprocess on elements
+        :return:
+        """
+        file = gzip.open(self.DATASET_LINKS[self.dataset_name]['dataset_dir'] + "/" + self.dataset_name + ".txt.gz",
+                         'rb')
+        file_content = file.read().decode("utf-8")
+        file_content = file_content.split('\n')
+        dataset_y, dataset_x = list(), list()
+        for element in file_content:
+            if "{" in element:
+                element_dict = ast.literal_eval(element)
+                src_graph = self._reindex_graph_nodes(element_dict['source_graph'])
+                query_graph = self._reindex_graph_nodes(element_dict['query_graph'])
+                if self.info['node_attr_dim'] == 0:
+                    src_graph = self._add_degree_node_feature(src_graph)
+                    query_graph = self._add_degree_node_feature(query_graph)
+                dataset_y.append(element_dict['label'])
+                dataset_x.append((self._graph_dict_format(src_graph), self._graph_dict_format(query_graph)))
+
+        return dataset_x, dataset_y
+
+
+if __name__ == "__main__":
+    Dataset('AIDS').load_dataset()
+
+
