@@ -227,13 +227,14 @@ class RowChooserLayer(tf.keras.layers.Layer):
         :param kwargs:
         :return:
         """
-        x = self.dense_layer(inputs)
+        raw_input, input_plus_attention = inputs
+        x = self.dense_layer(input_plus_attention)
         row_index = self.binary_maker(x)
         row_index = tf.expand_dims(row_index, -1)
-        row_index = tf.repeat(row_index, repeats=inputs.shape[-1], axis=-1)
+        row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
         bool_index = tf.math.not_equal(row_index, 0.0)
-        shape = tf.shape(inputs)
-        output = inputs[bool_index]
+        shape = tf.shape(raw_input)
+        output = raw_input[bool_index]
         return tf.reshape(output, self.get_new_shape(shape))
 
 
