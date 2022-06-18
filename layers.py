@@ -31,7 +31,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
             self.update_fn = self.create_gnn_layers(hidden_units, dropout_rate)
 
     @staticmethod
-    def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=True, name=None):
+    def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=False, name=None):
         """
         create gnn layers (it use for node features transformation)
         :param node_dim: 
@@ -195,6 +195,9 @@ class BinaryLayer(tf.keras.layers.Layer):
 
 
 class RowChooserLayer(tf.keras.layers.Layer):
+    """
+    input of this layer is output of GNN layer
+    """
 
     def __init__(self, units, *args, **kwargs):
         """
