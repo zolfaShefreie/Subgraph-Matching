@@ -3,6 +3,8 @@ import requests
 import ast
 import networkx as nx
 import gzip
+import numpy as np
+import tensorflow as tf
 
 
 def download_file(url: str, file_path: str):
@@ -122,10 +124,14 @@ class Dataset:
 
         edges, edges_attr = list(), list()
         for edge, attr in graph_dict['edges'].items():
-            edges.append(edge)
+            edges.append(np.array(edge))
             edges_attr.append(list(attr.values()))
 
-        return nodes, edges, edges_attr
+        # graph_data = np.empty(3, dtype=object)
+        # graph_data[0] = np.array(nodes)
+        # graph_data[1] = np.array(edges).T
+        # graph_data[2] = np.array(edges_attr)
+        return [nodes, np.array(edges).T.tolist(), edges_attr]
 
     def load_dataset(self) -> (list, list):
         """
@@ -146,12 +152,14 @@ class Dataset:
                     src_graph = self._add_degree_node_feature(src_graph)
                     query_graph = self._add_degree_node_feature(query_graph)
                 dataset_y.append(element_dict['label'])
-                dataset_x.append((self._graph_dict_format(src_graph), self._graph_dict_format(query_graph)))
 
-        return dataset_x, dataset_y
+                dataset_x.append([self._graph_dict_format(src_graph), self._graph_dict_format(query_graph)])
+
+        return tf.ragged.constant(dataset_x), tf.constant(dataset_y)
 
 
 if __name__ == "__main__":
-    Dataset('AIDS').load_dataset()
+    x, y = Dataset('AIDS').load_dataset()
+    # print(y.shape, x.shape, x[:2, 0:1].merge_dims(0, 1).shape)
 
 
