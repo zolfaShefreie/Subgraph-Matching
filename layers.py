@@ -5,7 +5,7 @@ from tensorflow import keras
 
 class GNNBaseLayer(tf.keras.layers.Layer):
 
-    def __init__(self, hidden_units, dropout_rate=0.2, aggregation_type="mean", combination_type="concat",
+    def __init__(self, hidden_units, node_dim, edge_dim, dropout_rate=0.2, aggregation_type="mean", combination_type="concat",
                  normalize=False, *args, **kwargs):
         """
         :param hidden_units: units for dense layers
@@ -22,8 +22,8 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         self.combination_type = combination_type
         self.normalize = normalize
 
-        self.base_message_create = self.create_gnn_layers(hidden_units, dropout_rate)
-        self.edge_transformer = self.create_edge_transformer_layers(hidden_units=hidden_units)
+        self.base_message_create = self.create_gnn_layers(hidden_units, node_dim, dropout_rate)
+        self.edge_transformer = self.create_edge_transformer_layers(hidden_units=hidden_units, edge_dim=edge_dim)
         if self.combination_type == "gru":
             self.update_fn = layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
                                         dropout=dropout_rate, return_state=True, recurrent_dropout=dropout_rate)
@@ -31,17 +31,17 @@ class GNNBaseLayer(tf.keras.layers.Layer):
             self.update_fn = self.create_gnn_layers(hidden_units, dropout_rate)
 
     @staticmethod
-    def create_gnn_layers(hidden_units, dropout_rate, use_attention=True, name=None):
+    def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=True, name=None):
         """
         create gnn layers (it use for node features transformation)
+        :param node_dim: 
         :param hidden_units:
         :param dropout_rate:
         :param use_attention: add attention layer or not
         :param name: name of box
         :return:
         """
-        gnn_layers = []
-
+        gnn_layers = [tf.keras.layers.Reshape((-1, node_dim))]
         for units in hidden_units:
             gnn_layers.append(layers.BatchNormalization())
             gnn_layers.append(layers.Dropout(dropout_rate))
@@ -52,14 +52,16 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         return keras.Sequential(gnn_layers, name=name)
 
     @staticmethod
-    def create_edge_transformer_layers(hidden_units, name=None):
+    def create_edge_transformer_layers(hidden_units, edge_dim, name=None):
         """
         create layers for edge feature transformation
+        :param edge_dim: 
         :param hidden_units:
         :param name: name of box
         :return:
         """
         edge_embed_layers = list()
+        edge_embed_layers.append(tf.keras.layers.Reshape((-1, edge_dim)))
         for units in hidden_units:
             edge_embed_layers.append(layers.Dense(units, activation=tf.nn.gelu))
         return keras.Sequential(layers, name=name)
@@ -139,9 +141,16 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         :return: graph embedding
         """
 
-        node_representations, edges, edge_features = inputs
-        node_indices, neighbour_indices = edges[0], edges[1]
-        neighbour_representations = tf.gather(node_representations, neighbour_indices)
+        # node_representations, edges, edge_features = inputs
+        node_representations = inputs[:, 0:1].merge_dims(0, 1)
+        edges = inputs[:, 1:2].merge_dims(0, 1)
+        edge_features = inputs[:, 2:3].merge_dims(0, 1)
+        # node_indices, neighbour_indices = edges[0], edges[1]
+        node_indices = edges[:, 0:1].merge_dims(0, 1)
+        neighbour_indices = edges[:, 1:2].merge_dims(0, 1)
+        # neighbour_representations = tf.gather(node_representations, neighbour_indices)
+        neighbour_representations = tf.ragged.constant([tf.gather(node_representations[i], neighbour_indices[i]).to_list() 
+                                                        for i in range(len(neighbour_indices.to_list()))])
         neighbour_messages = self.prepare_neighbour_messages(neighbour_representations, edge_features)
         aggregated_messages = self.aggregate(node_indices, neighbour_messages)
         return self.update(node_representations, aggregated_messages)
