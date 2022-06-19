@@ -1,5 +1,4 @@
 import tensorflow as tf
-from tensorflow.keras import layers
 from tensorflow import keras
 
 
@@ -28,7 +27,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
             self.update_fn = layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
                                         dropout=dropout_rate, return_state=True, recurrent_dropout=dropout_rate)
         else:
-            self.update_fn = self.create_gnn_layers(hidden_units, dropout_rate)
+            self.update_fn = self.create_gnn_layers(hidden_units, node_dim, dropout_rate)
 
     @staticmethod
     def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=False, name=None):
@@ -43,11 +42,11 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         """
         gnn_layers = [tf.keras.layers.Reshape((-1, node_dim))]
         for units in hidden_units:
-            gnn_layers.append(layers.BatchNormalization())
-            gnn_layers.append(layers.Dropout(dropout_rate))
+            gnn_layers.append(tf.keras.layers.BatchNormalization())
+            gnn_layers.append(tf.keras.layers.Dropout(dropout_rate))
             if use_attention:
-                gnn_layers.append(layers.Attention(use_scale=True))
-            gnn_layers.append(layers.Dense(units, activation=tf.nn.gelu))
+                gnn_layers.append(tf.keras.layers.Attention(use_scale=True))
+            gnn_layers.append(tf.keras.layers.Dense(units, activation=tf.nn.gelu))
 
         return keras.Sequential(gnn_layers, name=name)
 
@@ -63,8 +62,8 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         edge_embed_layers = list()
         edge_embed_layers.append(tf.keras.layers.Reshape((-1, edge_dim)))
         for units in hidden_units:
-            edge_embed_layers.append(layers.Dense(units, activation=tf.nn.gelu))
-        return keras.Sequential(layers, name=name)
+            edge_embed_layers.append(tf.keras.layers.Dense(units, activation=tf.nn.gelu))
+        return keras.Sequential(edge_embed_layers, name=name)
 
     def prepare_neighbour_messages(self, node_representations, edge_features=None):
         """
@@ -195,11 +194,8 @@ class ThresholdLayer(tf.keras.layers.Layer):
 
     def __init__(self, *args, **kwargs):
         super(ThresholdLayer, self).__init__(*args, **kwargs)
-
-    def build(self, input_shape):
         self.kernel = self.add_weight(name="threshold", shape=(1,), initializer="uniform",
                                       trainable=True)
-        super(ThresholdLayer, self).build(input_shape)
 
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)

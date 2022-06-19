@@ -8,9 +8,8 @@ class GraphEmbeddingModel(tf.keras.Model):
     this module uses 2 gnn layer to embed graph
     """
 
-    def __int__(self, hidden_units, node_dim, edge_dim, dropout_rate=0.2, aggregation_type="mean",
-                combination_type="concat",
-                normalize=False, *args, **kwargs):
+    def __init__(self, hidden_units, node_dim, edge_dim, dropout_rate=0.2, aggregation_type="mean",
+                 combination_type="concat", normalize=False, *args, **kwargs):
         super(GraphEmbeddingModel, self).__init__(*args, **kwargs)
 
         self.GNN_1 = GNNBaseLayer(hidden_units, node_dim, edge_dim, dropout_rate, aggregation_type, combination_type,
