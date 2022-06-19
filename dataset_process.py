@@ -45,6 +45,18 @@ class Dataset:
         else:
             raise Exception("Dataset Not Found")
 
+    @property
+    def max_graph_nodes(self):
+        return self.info['max_nodes']
+
+    @property
+    def node_attr_dim(self):
+        return self.info['node_attr_dim']
+
+    @property
+    def edge_attr_dim(self):
+        return self.info['edge_attr_dim']
+
     @classmethod
     def _get_dataset_info(cls, dataset_name: str) -> dict:
         """
