@@ -258,14 +258,13 @@ class RowChooserLayer(tf.keras.layers.Layer):
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
-    def call(self, inputs, *args, **kwargs):
+    def call(self, inputs, mask=None):
         """
         :param inputs:
-        :param args:
-        :param kwargs:
+        :param mask:
         :return:
         """
-        raw_input, input_plus_attention = inputs
+        raw_input, input_plus_attention = inputs[0], inputs[1]
         x = self.dense_layer(input_plus_attention)
         row_index = self.binary_maker(x)
         row_index = tf.expand_dims(row_index, -1)

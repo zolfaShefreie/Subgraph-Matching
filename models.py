@@ -1,5 +1,5 @@
 import tensorflow as tf
-from layers import GNNBaseLayer, RowChooserLayer, ThresholdLayer
+from layers import GNNBaseLayer, RowChooserLayer, ThresholdLayer, PaddingLayer
 import keras
 
 
@@ -39,10 +39,13 @@ class GraphMatchingModel(tf.keras.models.Model):
         self.dense_2 = tf.keras.layers.Dense(1)
         self.output_layer = ThresholdLayer()
 
-    def call(self, inputs):
+    def call(self, inputs, mask):
         x1, x2 = inputs
-        x1_aggregated = self.aggregator(self.attention([x1, x2]))
-        x2_aggregated = self.aggregator(self.attention([x2, x1]))
+        mask1, mask2 = mask
+        x1_aggregated = self.aggregator(self.attention([x1, x2], mask=[mask1, mask2]),
+                                        mask=self.compute_mask([x1, x2], mask=[mask1, mask2]))
+        x2_aggregated = self.aggregator(self.attention([x2, x1], mask=[mask2, mask1]),
+                                        mask=self.compute_mask([x2, x1], mask=[mask2, mask1]))
         combined = self.dot_layer([x1_aggregated, x2_aggregated])
         combined = self.dense_1(combined)
         return self.output_layer(self.dense_2(combined))
@@ -57,27 +60,39 @@ class SearchSubgraph(tf.keras.models.Model):
         self.aggregator = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(max_nodes), merge_mode='ave')
         self.subgraph_maker = RowChooserLayer(units=max_nodes)
 
-    def call(self, inputs):
+    def call(self, inputs, mask=None):
         x1, x2 = inputs
-        x1_aggregated = self.aggregator(self.attention([x1, x2]))
-        return self.subgraph_maker((x1, x1_aggregated))
+        attention_scores, attention_mask = self.attention(inputs, mask=mask), self.attention.compute_mask(inputs, mask=mask)
+        x1_aggregated = self.aggregator(attention_scores, mask=attention_mask)
+        return self.subgraph_maker([x1, x1_aggregated], mask=None)
 
 
-class SubgraphMatching(tf.keras.models.Model):
+class SubgraphMatchingModel(tf.keras.models.Model):
 
     def __init__(self, graph_embed_model, subgraph_search_model, graph_matching_model, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.graph_embed_model = graph_embed_model
         self.subgraph_search_model = subgraph_search_model
         self.graph_matching_model = graph_matching_model
+        self.padding_layer = PaddingLayer()
 
     def call(self, inputs):
         graph_1 = inputs[:, 0:1].merge_dims(0, 1)
         graph_2 = inputs[:, 1:2].merge_dims(0, 1)
+
+        # graph embedding
         graph_1_embed = self.graph_embed_model(graph_1)
         graph_2_embed = self.graph_embed_model(graph_2)
-        subgraph_embed = self.subgraph_search_model((graph_1_embed, graph_2_embed))
-        return self.subgraph_search_model((graph_1_embed, subgraph_embed))
+
+        # padding and masking for graph embeds
+        graph_1_embed, graph_1_masking = self.padding_layer(graph_1_embed), self.padding_layer.compute_output_mask(graph_1_embed)
+        graph_2_embed, graph_2_masking = self.padding_layer(graph_2_embed), self.padding_layer.compute_output_mask(graph_2_embed)
+
+        # choose subgraph
+        subgraph_embed = self.subgraph_search_model([graph_1_embed, graph_2_embed], mask=[graph_1_masking, graph_2_masking])
+        subgraph_embed, subgraph_masking = self.padding_layer(subgraph_embed), self.padding_layer.compute_output_mask(subgraph_embed)
+
+        return self.graph_matching_model((graph_1_embed, subgraph_embed))
 
 
 
