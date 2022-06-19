@@ -41,10 +41,10 @@ class GraphMatchingModel(tf.keras.models.Model):
     def call(self, inputs, mask):
         x1, x2 = inputs
         mask1, mask2 = mask
-        x1_aggregated = self.aggregator(self.attention([x1, x2], mask=[mask1, mask2]),
-                                        mask=self.compute_mask([x1, x2], mask=[mask1, mask2]))
-        x2_aggregated = self.aggregator(self.attention([x2, x1], mask=[mask2, mask1]),
-                                        mask=self.compute_mask([x2, x1], mask=[mask2, mask1]))
+        x1_aggregated = self.aggregator(self.attention([x1, x2], mask=[tf.reduce_any(mask1, 2), tf.reduce_any(mask2, 2)]),
+                                        mask=self.compute_mask([x1, x2], mask=[tf.reduce_any(mask1, 2), tf.reduce_any(mask2, 2)]))
+        x2_aggregated = self.aggregator(self.attention([x2, x1], mask=[tf.reduce_any(mask2, 2), tf.reduce_any(mask1, 2)]),
+                                        mask=self.compute_mask([x2, x1], mask=[tf.reduce_any(mask2, 2), tf.reduce_any(mask1, 2)]))
         combined = self.dot_layer([x1_aggregated, x2_aggregated])
         combined = self.dense_1(combined)
         return self.output_layer(self.dense_2(combined))
@@ -61,7 +61,8 @@ class SearchSubgraph(tf.keras.models.Model):
 
     def call(self, inputs, mask=None):
         x1, x2 = inputs
-        attention_scores, attention_mask = self.attention(inputs, mask=mask), self.attention.compute_mask(inputs, mask=mask)
+        attention_scores = self.attention(inputs, mask=[tf.reduce_any(mask[0], 2), tf.reduce_any(mask[1], 2)])
+        attention_mask = self.attention.compute_mask(inputs, mask=[tf.reduce_any(mask[0], 2), tf.reduce_any(mask[1], 2)])
         x1_aggregated = self.aggregator(attention_scores, mask=attention_mask)
         return self.subgraph_maker([x1, x1_aggregated], mask=None)
 
