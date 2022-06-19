@@ -156,6 +156,41 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         return self.update(node_representations, aggregated_messages)
 
 
+class PaddingLayer(tf.keras.layers.Layer):
+
+    def __int__(self, custom_padding_value=None, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.custom_padding_value = custom_padding_value
+    
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
+
+    def call(self, inputs):
+        if self.custom_padding_value is None:
+            min_value = tf.reduce_min(inputs)
+            padding_value = min_value - 1
+        else:
+            padding_value = self.custom_padding_value
+
+        if hasattr(inputs, '__len__'):
+            return tf.keras.preprocessing.sequence.pad_sequences(inputs, value=padding_value)
+        return tf.sparse.to_dense(inputs.to_sparse(), default_value=padding_value)
+
+    def compute_output_mask(self, inputs):
+        """
+        compute mask based on padding value in call() method
+        :param inputs: 
+        :return: 
+        """
+        if self.custom_padding_value is None:
+            min_value = tf.reduce_min(inputs)
+            padding_value = min_value - 1
+        else:
+            padding_value = self.custom_padding_value
+        output = self.call(inputs)
+        return tf.not_equal(output, padding_value)
+
+
 class ThresholdLayer(tf.keras.layers.Layer):
 
     def __init__(self, *args, **kwargs):
@@ -165,6 +200,9 @@ class ThresholdLayer(tf.keras.layers.Layer):
         self.kernel = self.add_weight(name="threshold", shape=(1,), initializer="uniform",
                                       trainable=True)
         super(ThresholdLayer, self).build(input_shape)
+
+    def __call__(self, *args, **kwargs):
+        return self.call(*args, **kwargs)
 
     def call(self, x):
         """
@@ -208,7 +246,7 @@ class RowChooserLayer(tf.keras.layers.Layer):
         super(RowChooserLayer, self).__init__(*args, **kwargs)
 
         self.binary_maker = BinaryLayer()
-        self.dense_layer = tf.keras.layers.Dense(units, activation="sigmoid")
+        self.dense_layer = tf.keras.layers.Dense(units, activation="relu")
     
     @staticmethod
     def get_new_shape(pre_shape):
@@ -238,3 +276,24 @@ class RowChooserLayer(tf.keras.layers.Layer):
         return tf.reshape(output, self.get_new_shape(shape))
 
 
+# class SubMatrixChooser(tf.keras.layers.Layer):
+#
+#     def __init__(self, units, *args, **kwargs):
+#         super().__init__(*args, **kwargs)
+#         self.binary_maker = BinaryLayer()
+#
+#     def call(self, inputs, *args, **kwargs):
+#         """
+#         :param inputs:
+#         :param args:
+#         :param kwargs:
+#         :return:
+#         """
+#         raw_input, input_plus_attention = inputs
+#         row_index = self.binary_maker(input_plus_attention)
+#         row_index = tf.expand_dims(row_index, -1)
+#         row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
+#         bool_index = tf.math.not_equal(row_index, 0.0)
+#         shape = tf.shape(raw_input)
+#         output = raw_input[bool_index]
+#         return tf.reshape(output, self.get_new_shape(shape))
