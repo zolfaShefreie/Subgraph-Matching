@@ -1,11 +1,29 @@
 import tensorflow as tf
 from tensorflow import keras
+import numpy as np
+
+
+class GraphElementEmbedLayer(tf.keras.layers.Layer):
+    def __init__(self, sequential_model, old_attr_dim, new_attr_dim=0, *args, **kwargs):
+        super(GraphElementEmbedLayer, self).__init__(*args, **kwargs)
+        self.sequential_model = sequential_model
+        # self.reshape = tf.keras.layers.Reshape((old_attr_dim, ))
+        self.old_attr_dim = old_attr_dim
+        self.new_attr_dim = new_attr_dim
+
+    def call(self, inputs):
+        element_sizes = [len(each) for each in inputs.to_list()]
+        inputs = inputs.merge_dims(0, 1)
+        inputs = tf.reshape(inputs, (-1, self.old_attr_dim))
+        embedded_result = self.sequential_model(inputs)
+        split_result = tf.split(embedded_result, element_sizes, 0)
+        return tf.ragged.constant(list([each.numpy().tolist() for each in split_result]))
 
 
 class GNNBaseLayer(tf.keras.layers.Layer):
 
-    def __init__(self, hidden_units, node_dim, edge_dim, dropout_rate=0.2, aggregation_type="mean", combination_type="concat",
-                 normalize=False, *args, **kwargs):
+    def __init__(self, hidden_units, node_dim, edge_dim, dropout_rate=0.2, aggregation_type="mean",
+                 combination_type="concat", normalize=False, *args, **kwargs):
         """
         :param hidden_units: units for dense layers
         :param dropout_rate:
@@ -20,14 +38,18 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         self.aggregation_type = aggregation_type
         self.combination_type = combination_type
         self.normalize = normalize
-
-        self.base_message_create = self.create_gnn_layers(hidden_units, node_dim, dropout_rate)
-        self.edge_transformer = self.create_edge_transformer_layers(hidden_units=hidden_units, edge_dim=edge_dim)
+        self.n = node_dim
+        self.base_message_create = GraphElementEmbedLayer(self.create_gnn_layers(hidden_units, node_dim, dropout_rate),
+                                                          node_dim)
+        self.edge_transformer = GraphElementEmbedLayer(self.create_edge_transformer_layers(hidden_units=hidden_units,
+                                                                                           edge_dim=edge_dim), edge_dim)
         if self.combination_type == "gru":
-            self.update_fn = layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
-                                        dropout=dropout_rate, return_state=True, recurrent_dropout=dropout_rate)
+            self.update_fn = tf.keras.layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
+                                                 dropout=dropout_rate, return_state=True,
+                                                 recurrent_dropout=dropout_rate)
         else:
-            self.update_fn = self.create_gnn_layers(hidden_units, node_dim, dropout_rate)
+            self.update_fn = GraphElementEmbedLayer(self.create_gnn_layers(hidden_units, node_dim, dropout_rate),
+                                                    node_dim + hidden_units[-1] if self.combination_type == 'concat' else hidden_units[-1])
 
     @staticmethod
     def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=False, name=None):
@@ -40,7 +62,8 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         :param name: name of box
         :return:
         """
-        gnn_layers = [tf.keras.layers.Reshape((-1, node_dim))]
+        # gnn_layers = [tf.keras.layers.Reshape((-1, node_dim))]
+        gnn_layers = list()
         for units in hidden_units:
             gnn_layers.append(tf.keras.layers.BatchNormalization())
             gnn_layers.append(tf.keras.layers.Dropout(dropout_rate))
@@ -60,7 +83,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         :return:
         """
         edge_embed_layers = list()
-        edge_embed_layers.append(tf.keras.layers.Reshape((-1, edge_dim)))
+        # edge_embed_layers.append(tf.keras.layers.Reshape((-1, edge_dim)))
         for units in hidden_units:
             edge_embed_layers.append(tf.keras.layers.Dense(units, activation=tf.nn.gelu))
         return keras.Sequential(edge_embed_layers, name=name)
@@ -78,26 +101,38 @@ class GNNBaseLayer(tf.keras.layers.Layer):
             messages = messages * edge_representations
         return messages
 
-    def aggregate(self, node_indices, neighbour_messages):
+    def aggregate(self, node_indices, neighbour_messages, number_nodes):
         """
         aggregate neighbour messages
+        :param number_nodes: number of nodes for each input
         :param node_indices: source nodes indices is a 1d array with length of number of edge
                              that shows the with neighbour nodes must aggregate together.
         :param neighbour_messages: is a 2d array with shape of (number of edges, units)
         :return:
         """
+        all_aggregated_message = list()
+        # for each in batch
+        for graph_node_indices, graph_neighbour_messages, num_nodes in zip(node_indices, neighbour_messages,
+                                                                           number_nodes):
+            if self.aggregation_type == "sum":
+                aggregated_message = tf.math.unsorted_segment_sum(graph_neighbour_messages,
+                                                                  graph_node_indices,
+                                                                  num_segments=num_nodes)
+            elif self.aggregation_type == "mean":
+                aggregated_message = tf.math.unsorted_segment_mean(graph_neighbour_messages,
+                                                                   graph_node_indices,
+                                                                   num_segments=num_nodes)
+            elif self.aggregation_type == "max":
+                aggregated_message = tf.math.unsorted_segment_max(graph_neighbour_messages,
+                                                                  graph_node_indices,
+                                                                  num_segments=num_nodes)
+            else:
+                raise ValueError(f"Invalid aggregation type: {self.aggregation_type}.")
+            all_aggregated_message.append(tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0))
 
-        num_nodes = tf.math.reduce_max(node_indices) + 1
-        if self.aggregation_type == "sum":
-            aggregated_message = tf.math.unsorted_segment_sum(neighbour_messages, node_indices, num_segments=num_nodes)
-        elif self.aggregation_type == "mean":
-            aggregated_message = tf.math.unsorted_segment_mean(neighbour_messages, node_indices, num_segments=num_nodes)
-        elif self.aggregation_type == "max":
-            aggregated_message = tf.math.unsorted_segment_max(neighbour_messages, node_indices, num_segments=num_nodes)
-        else:
-            raise ValueError(f"Invalid aggregation type: {self.aggregation_type}.")
-
-        return aggregated_message
+        # type formatting
+        all_aggregated_message = tf.ragged.constant(list([each.numpy().tolist() for each in all_aggregated_message]))
+        return all_aggregated_message
 
     def update(self, node_representations, aggregated_messages):
         """
@@ -108,10 +143,10 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         """
         if self.combination_type == "gru":
             # Create a sequence of two elements for the GRU layer.
-            h = tf.stack([node_representations, aggregated_messages], axis=1)
+            h = tf.stack([node_representations, aggregated_messages], axis=2)
         elif self.combination_type == "concat":
             # Concatenate the node_representations and aggregated_messages.
-            h = tf.concat([node_representations, aggregated_messages], axis=1)
+            h = tf.concat([node_representations, aggregated_messages], axis=2)
         elif self.combination_type == "add":
             # Add node_representations and aggregated_messages.
             h = node_representations + aggregated_messages
@@ -130,7 +165,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
-    def call(self, inputs, *args, **kwargs):
+    def call(self, inputs):
         """
         Process the inputs to produce the graph_embedding.
         :param inputs: graph => tuple with tree elements
@@ -142,7 +177,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
 
         # node_representations, edges, edge_features = inputs
         node_representations = inputs[:, 0:1].merge_dims(0, 1)
-        edges = inputs[:, 1:2].merge_dims(0, 1)
+        edges = tf.cast(inputs[:, 1:2].merge_dims(0, 1), tf.int64)
         edge_features = inputs[:, 2:3].merge_dims(0, 1)
         # node_indices, neighbour_indices = edges[0], edges[1]
         node_indices = edges[:, 0:1].merge_dims(0, 1)
@@ -151,13 +186,16 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         neighbour_representations = tf.ragged.constant([tf.gather(node_representations[i], neighbour_indices[i]).to_list() 
                                                         for i in range(len(neighbour_indices.to_list()))])
         neighbour_messages = self.prepare_neighbour_messages(neighbour_representations, edge_features)
-        aggregated_messages = self.aggregate(node_indices, neighbour_messages)
+
+        number_nodes = tf.ragged.constant([len(each.numpy()) for each in node_representations])
+        aggregated_messages = self.aggregate(node_indices, neighbour_messages, number_nodes)
+
         return self.update(node_representations, aggregated_messages)
 
 
 class PaddingLayer(tf.keras.layers.Layer):
 
-    def __int__(self, custom_padding_value=None, *args, **kwargs):
+    def __init__(self, custom_padding_value=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.custom_padding_value = custom_padding_value
     

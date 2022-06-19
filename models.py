@@ -23,7 +23,7 @@ class GraphEmbeddingModel(tf.keras.Model):
     def call(self, inputs, training=None, mask=None):
         # node_features, edges, edge_weights = inputs
         embed_1 = self.GNN_1(inputs)
-        return self.GNN_2(tf.concat([embed_1, inputs[:, 1:3], 0]))
+        return self.GNN_2(tf.concat([tf.expand_dims(embed_1, 1), inputs[:, 1:3]], 1))
 
 
 class GraphMatchingModel(tf.keras.models.Model):

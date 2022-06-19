@@ -129,7 +129,6 @@ class Dataset:
         :param graph_dict:
         :return:
         """
-
         nodes = [None for i in range(len(graph_dict['nodes']))]
         for node_id, node_attr in graph_dict['nodes'].items():
             nodes[node_id] = list(node_attr.values())
@@ -139,10 +138,6 @@ class Dataset:
             edges.append(np.array(edge))
             edges_attr.append(list(attr.values()))
 
-        # graph_data = np.empty(3, dtype=object)
-        # graph_data[0] = np.array(nodes)
-        # graph_data[1] = np.array(edges).T
-        # graph_data[2] = np.array(edges_attr)
         return [nodes, np.array(edges).T.tolist(), edges_attr]
 
     def load_dataset(self) -> (list, list):
