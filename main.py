@@ -12,7 +12,9 @@ if __name__ == '__main__':
     graph_matching_model = models.GraphMatchingModel()
     subgraph_matching_model = models.SubgraphMatchingModel(graph_embed_model=graph_embed_model,
                                                            subgraph_search_model=subgraph_searching_model, 
-                                                           graph_matching_model=graph_matching_model)
+                                                           graph_matching_model=graph_matching_model,
+                                                           max_nodes=dataset_obj.max_graph_nodes,
+                                                           node_embed_dim=32)
 
     subgraph_matching_model.compile(optimizer='sgd', loss="mse", metrics=['accuracy'], run_eagerly=True)
     subgraph_matching_model.fit(x, y)

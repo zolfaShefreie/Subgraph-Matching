@@ -14,6 +14,7 @@ class GraphElementEmbedLayer(tf.keras.layers.Layer):
     def call(self, inputs):
         element_sizes = [len(each) for each in inputs.to_list()]
         inputs = inputs.merge_dims(0, 1)
+        inputs = tf.sparse.to_dense(inputs.to_sparse(), default_value=0)
         inputs = tf.reshape(inputs, (-1, self.old_attr_dim))
         embedded_result = self.sequential_model(inputs)
         split_result = tf.split(embedded_result, element_sizes, 0)
@@ -195,14 +196,26 @@ class GNNBaseLayer(tf.keras.layers.Layer):
 
 class PaddingLayer(tf.keras.layers.Layer):
 
-    def __init__(self, custom_padding_value=None, *args, **kwargs):
+    def __init__(self, shape, custom_padding_value=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.custom_padding_value = custom_padding_value
+        self.shape = tf.convert_to_tensor(shape)
     
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
+    def adding_shape(self, input_shape):
+        input_shape = tf.convert_to_tensor(input_shape)
+        diff = self.shape - input_shape
+        condition = tf.less_equal(diff, 0)
+        if tf.reduce_all(condition):
+            shape = self.shape.numpy()
+            shape[-2] = 0
+            return shape
+        return tf.where(condition, self.shape, diff)
+
     def call(self, inputs):
+
         if self.custom_padding_value is None:
             min_value = tf.reduce_min(inputs)
             padding_value = min_value - 1
@@ -210,8 +223,13 @@ class PaddingLayer(tf.keras.layers.Layer):
             padding_value = self.custom_padding_value
 
         if hasattr(inputs, '__len__'):
-            return tf.keras.preprocessing.sequence.pad_sequences(inputs, value=padding_value)
-        return tf.sparse.to_dense(inputs.to_sparse(), default_value=padding_value)
+            input_plus_pad = tf.keras.preprocessing.sequence.pad_sequences(inputs, value=padding_value)
+        else:
+            input_plus_pad = tf.sparse.to_dense(inputs.to_sparse(), default_value=padding_value)
+
+        if tf.reduce_all(self.shape == input_plus_pad.shape):
+            return input_plus_pad
+        return tf.concat([input_plus_pad, tf.ones(self.adding_shape(input_plus_pad.shape)) * padding_value], 1)
 
     def compute_output_mask(self, inputs):
         """
@@ -268,7 +286,8 @@ class BinaryLayer(tf.keras.layers.Layer):
 
 class RowChooserLayer(tf.keras.layers.Layer):
     """
-    input of this layer is output of GNN layer
+    this layer compute with row must be delete with deletion. it compute new mask based of result without changing input.
+    the main method is compute_output_mask method
     """
 
     def __init__(self, units, *args, **kwargs):
@@ -282,31 +301,56 @@ class RowChooserLayer(tf.keras.layers.Layer):
         self.binary_maker = BinaryLayer()
         self.dense_layer = tf.keras.layers.Dense(units, activation="relu")
     
-    @staticmethod
-    def get_new_shape(pre_shape):
-        if len(pre_shape) == 3:
-            return pre_shape[0], -1, pre_shape[2]
-        if len(pre_shape) == 2:
-            return -1, pre_shape[-1]
-    
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
-    def call(self, inputs, mask=None):
+    def call(self, inputs, mask=None, return_binary_result=False):
         """
+        compute binary result
+        :param inputs:
+        :param mask:
+        :param return_binary_result: if set to True returns binary_result too
+        :return: raw input again
+        """
+        raw_input, input_plus_attention = inputs[0], inputs[1]
+        x = self.dense_layer(input_plus_attention)
+        row_index = self.binary_maker(x)
+        if return_binary_result:
+            return raw_input, row_index
+        return raw_input
+        # row_index = tf.expand_dims(row_index, -1)
+        # row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
+        # bool_index = tf.math.not_equal(row_index, 0.0)
+
+        # output = raw_input[bool_index]
+        #
+        # # reshape process for 1-d output
+        # element_new_sizes = [len(each) for each in bool_index.numpy() if each.all()]
+        # if len(element_new_sizes) == 0:
+        #     return None
+        # output = tf.reshape(output, (-1, raw_input.shape[-1]))
+        # split_output = tf.split(output, element_new_sizes, 0)
+        # return tf.ragged.constant(list([each.numpy().tolist() for each in split_output]))
+
+    def compute_output_mask(self, inputs, mask):
+        """
+        comput output mask with raw_input mask, attention mask and result of binary output
+        that shows with rows must be without effect
         :param inputs:
         :param mask:
         :return:
         """
         raw_input, input_plus_attention = inputs[0], inputs[1]
-        x = self.dense_layer(input_plus_attention)
-        row_index = self.binary_maker(x)
+        mask_raw_input, attention_mask = mask
+        _, row_index = self(inputs, mask, True)
         row_index = tf.expand_dims(row_index, -1)
         row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
         bool_index = tf.math.not_equal(row_index, 0.0)
-        shape = tf.shape(raw_input)
-        output = raw_input[bool_index]
-        return tf.reshape(output, self.get_new_shape(shape))
+
+        attention_mask = tf.expand_dims(attention_mask, -1)
+        attention_mask = tf.repeat(attention_mask, repeats=raw_input.shape[-1], axis=-1)
+        return tf.math.logical_and(tf.math.logical_and(mask_raw_input, bool_index), attention_mask)
+
 
 
 # class SubMatrixChooser(tf.keras.layers.Layer):

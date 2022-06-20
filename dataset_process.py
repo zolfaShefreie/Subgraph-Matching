@@ -138,7 +138,8 @@ class Dataset:
             edges.append(np.array(edge))
             edges_attr.append(list(attr.values()))
 
-        return [nodes, np.array(edges).T.tolist(), edges_attr]
+        format_edges = np.array(edges).T.tolist() if len(edges) != 0 else [[], []]
+        return [nodes, format_edges, edges_attr]
 
     def load_dataset(self) -> (list, list):
         """
