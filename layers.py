@@ -138,21 +138,13 @@ class GNNBaseLayer(tf.keras.layers.Layer):
                                                                   num_segments=num_nodes)
             else:
                 raise ValueError(f"Invalid aggregation type: {self.aggregation_type}.")
-            # try:
-            #     aggregated_message_pad = tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0)
-            # except:
-            # aggregated_message_pad = tf.keras.preprocessing.sequence.pad_sequences(aggregated_message)
+
             aggregated_message_pad = aggregated_message
             if all_aggregated_message is None:
                 all_aggregated_message = tf.expand_dims(aggregated_message_pad, 0)
             else:
                 all_aggregated_message = tf.ragged.stack([all_aggregated_message,
                                                           tf.expand_dims(aggregated_message_pad, 0)]).merge_dims(0, 1)
-            # all_aggregated_message.append(tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0))
-
-        # type formatting
-        # all_aggregated_message = tf.ragged.constant(list([each.numpy().tolist() for each in all_aggregated_message]))
-        # print(all_aggregated_message)
         return all_aggregated_message
 
     def update(self, node_representations, aggregated_messages):
@@ -203,9 +195,6 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         # node_indices, neighbour_indices = edges[0], edges[1]
         node_indices = edges[:, 0:1].merge_dims(0, 1)
         neighbour_indices = edges[:, 1:2].merge_dims(0, 1)
-        # neighbour_representations = tf.gather(node_representations, neighbour_indices)
-        # neighbour_representations = tf.ragged.constant([tf.gather(node_representations[i], neighbour_indices[i]).to_list()
-        #                                                 for i in range(len(neighbour_indices.to_list()))])
         neighbour_representations = tf.ragged.stack([tf.gather(node_representation, neighbour_index)
                                                     for node_representation, neighbour_index in
                                                     zip(node_representations, neighbour_indices)], 0)
@@ -222,7 +211,6 @@ class PaddingLayer(tf.keras.layers.Layer):
     def __init__(self, shape, custom_padding_value=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.custom_padding_value = custom_padding_value
-        # print(type(shape))
         self.shape = shape
     
     def __call__(self, *args, **kwargs):
@@ -340,23 +328,9 @@ class RowChooserLayer(tf.keras.layers.Layer):
         raw_input, input_plus_attention = inputs[0], inputs[1]
         x = self.dense_layer(input_plus_attention)
         row_index = self.binary_maker(x)
-        print(input_plus_attention.shape)
         if return_binary_result:
             return raw_input, row_index
         return raw_input
-        # row_index = tf.expand_dims(row_index, -1)
-        # row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
-        # bool_index = tf.math.not_equal(row_index, 0.0)
-
-        # output = raw_input[bool_index]
-        #
-        # # reshape process for 1-d output
-        # element_new_sizes = [len(each) for each in bool_index.numpy() if each.all()]
-        # if len(element_new_sizes) == 0:
-        #     return None
-        # output = tf.reshape(output, (-1, raw_input.shape[-1]))
-        # split_output = tf.split(output, element_new_sizes, 0)
-        # return tf.ragged.constant(list([each.numpy().tolist() for each in split_output]))
 
     def compute_output_mask(self, inputs, mask):
         """
@@ -372,32 +346,6 @@ class RowChooserLayer(tf.keras.layers.Layer):
         row_index = tf.expand_dims(row_index, -1)
         row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
         bool_index = tf.math.not_equal(row_index, 0.0)
-        print(bool_index.shape)
         attention_mask = tf.expand_dims(attention_mask, -1)
         attention_mask = tf.repeat(attention_mask, repeats=raw_input.shape[-1], axis=-1)
-        print(attention_mask.shape)
         return tf.math.logical_and(tf.math.logical_and(mask_raw_input, bool_index), attention_mask)
-
-
-
-# class SubMatrixChooser(tf.keras.layers.Layer):
-#
-#     def __init__(self, units, *args, **kwargs):
-#         super().__init__(*args, **kwargs)
-#         self.binary_maker = BinaryLayer()
-#
-#     def call(self, inputs, *args, **kwargs):
-#         """
-#         :param inputs:
-#         :param args:
-#         :param kwargs:
-#         :return:
-#         """
-#         raw_input, input_plus_attention = inputs
-#         row_index = self.binary_maker(input_plus_attention)
-#         row_index = tf.expand_dims(row_index, -1)
-#         row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
-#         bool_index = tf.math.not_equal(row_index, 0.0)
-#         shape = tf.shape(raw_input)
-#         output = raw_input[bool_index]
-#         return tf.reshape(output, self.get_new_shape(shape))
