@@ -1,24 +1,68 @@
 import tensorflow as tf
-from tensorflow import keras
+# from tensorflow import keras
 import numpy as np
 
 
 class GraphElementEmbedLayer(tf.keras.layers.Layer):
-    def __init__(self, sequential_model, old_attr_dim, new_attr_dim=0, *args, **kwargs):
+    def __init__(self, sequential_model, attr_dim, new_attr_dim=0, *args, **kwargs):
         super(GraphElementEmbedLayer, self).__init__(*args, **kwargs)
         self.sequential_model = sequential_model
         # self.reshape = tf.keras.layers.Reshape((old_attr_dim, ))
-        self.old_attr_dim = old_attr_dim
+        self.attr_dim = attr_dim
         self.new_attr_dim = new_attr_dim
 
     def call(self, inputs):
         element_sizes = [len(each) for each in inputs.to_list()]
         inputs = inputs.merge_dims(0, 1)
         inputs = tf.sparse.to_dense(inputs.to_sparse(), default_value=0)
-        inputs = tf.reshape(inputs, (-1, self.old_attr_dim))
+        inputs = tf.reshape(inputs, (-1, self.attr_dim))
         embedded_result = self.sequential_model(inputs)
         split_result = tf.split(embedded_result, element_sizes, 0)
         return tf.ragged.constant(list([each.numpy().tolist() for each in split_result]))
+
+
+class NodeEmbeddingLayer(tf.keras.layers.Layer):
+    def __init__(self, units, dropout_rate, attr_dim, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attr_dim = attr_dim
+        self.batch_normalization_1 = tf.keras.layers.BatchNormalization()
+        self.dropout_1 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_1 = tf.keras.layers.Dense(units, activation=tf.nn.gelu)
+        self.batch_normalization_2 = tf.keras.layers.BatchNormalization()
+        self.dropout_2 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_2 = tf.keras.layers.Dense(units, activation=tf.nn.gelu)
+
+    def call(self, inputs):
+        element_sizes = inputs.row_splits
+        inputs = inputs.merge_dims(0, 1)
+        inputs = tf.sparse.to_dense(inputs.to_sparse(), default_value=0)
+        inputs = tf.reshape(inputs, (-1, self.attr_dim))
+        embedded_result = self.batch_normalization_1(inputs)
+        embedded_result = self.dropout_1(embedded_result)
+        embedded_result = self.dense_1(embedded_result)
+        embedded_result = self.batch_normalization_2(embedded_result)
+        embedded_result = self.dropout_2(embedded_result)
+        embedded_result = self.dense_2(embedded_result)
+        return tf.RaggedTensor.from_row_splits(embedded_result, element_sizes)
+
+
+class EdgeEmbeddingLayer(tf.keras.layers.Layer):
+    def __init__(self, units, dropout_rate, attr_dim, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.attr_dim = attr_dim
+        self.dense_1 = tf.keras.layers.Dense(units, activation=tf.nn.gelu)
+        self.dropout_1 = tf.keras.layers.Dropout(dropout_rate)
+        self.dense_2 = tf.keras.layers.Dense(units, activation=tf.nn.gelu)
+
+    def call(self, inputs):
+        element_sizes = inputs.row_splits
+        inputs = inputs.merge_dims(0, 1)
+        inputs = tf.sparse.to_dense(inputs.to_sparse(), default_value=0)
+        inputs = tf.reshape(inputs, (-1, self.attr_dim))
+        embedded_result = self.dense_1(inputs)
+        embedded_result = self.dropout_1(embedded_result)
+        embedded_result = self.dense_2(embedded_result)
+        return tf.RaggedTensor.from_row_splits(embedded_result, element_sizes)
 
 
 class GNNBaseLayer(tf.keras.layers.Layer):
@@ -39,55 +83,19 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         self.aggregation_type = aggregation_type
         self.combination_type = combination_type
         self.normalize = normalize
-        self.n = node_dim
-        self.base_message_create = GraphElementEmbedLayer(self.create_gnn_layers(hidden_units, node_dim, dropout_rate),
-                                                          node_dim)
-        self.edge_transformer = GraphElementEmbedLayer(self.create_edge_transformer_layers(hidden_units=hidden_units,
-                                                                                           edge_dim=edge_dim), edge_dim)
+        self.base_message_create = NodeEmbeddingLayer(units=hidden_units, attr_dim=node_dim,
+                                                      dropout_rate=dropout_rate, name="base_message_create")
+        self.edge_transformer = EdgeEmbeddingLayer(units=hidden_units, attr_dim=edge_dim,
+                                                   dropout_rate=dropout_rate, name="edge_transformer")
         if self.combination_type == "gru":
             self.update_fn = tf.keras.layers.GRU(units=hidden_units, activation="tanh", recurrent_activation="sigmoid",
                                                  dropout=dropout_rate, return_state=True,
                                                  recurrent_dropout=dropout_rate)
         else:
-            self.update_fn = GraphElementEmbedLayer(self.create_gnn_layers(hidden_units, node_dim, dropout_rate),
-                                                    node_dim + hidden_units[-1] if self.combination_type == 'concat' else hidden_units[-1])
-
-    @staticmethod
-    def create_gnn_layers(hidden_units, node_dim, dropout_rate, use_attention=False, name=None):
-        """
-        create gnn layers (it use for node features transformation)
-        :param node_dim: 
-        :param hidden_units:
-        :param dropout_rate:
-        :param use_attention: add attention layer or not
-        :param name: name of box
-        :return:
-        """
-        # gnn_layers = [tf.keras.layers.Reshape((-1, node_dim))]
-        gnn_layers = list()
-        for units in hidden_units:
-            gnn_layers.append(tf.keras.layers.BatchNormalization())
-            gnn_layers.append(tf.keras.layers.Dropout(dropout_rate))
-            if use_attention:
-                gnn_layers.append(tf.keras.layers.Attention(use_scale=True))
-            gnn_layers.append(tf.keras.layers.Dense(units, activation=tf.nn.gelu))
-
-        return keras.Sequential(gnn_layers, name=name)
-
-    @staticmethod
-    def create_edge_transformer_layers(hidden_units, edge_dim, name=None):
-        """
-        create layers for edge feature transformation
-        :param edge_dim: 
-        :param hidden_units:
-        :param name: name of box
-        :return:
-        """
-        edge_embed_layers = list()
-        # edge_embed_layers.append(tf.keras.layers.Reshape((-1, edge_dim)))
-        for units in hidden_units:
-            edge_embed_layers.append(tf.keras.layers.Dense(units, activation=tf.nn.gelu))
-        return keras.Sequential(edge_embed_layers, name=name)
+            self.update_fn = NodeEmbeddingLayer(units=hidden_units,
+                                                attr_dim=node_dim + hidden_units if self.combination_type == 'concat' else hidden_units,
+                                                dropout_rate=dropout_rate,
+                                                name="update_fn")
 
     def prepare_neighbour_messages(self, node_representations, edge_features=None):
         """
@@ -111,7 +119,8 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         :param neighbour_messages: is a 2d array with shape of (number of edges, units)
         :return:
         """
-        all_aggregated_message = list()
+        all_aggregated_message = None
+        # all_aggregated_message = list()
         # for each in batch
         for graph_node_indices, graph_neighbour_messages, num_nodes in zip(node_indices, neighbour_messages,
                                                                            number_nodes):
@@ -129,10 +138,21 @@ class GNNBaseLayer(tf.keras.layers.Layer):
                                                                   num_segments=num_nodes)
             else:
                 raise ValueError(f"Invalid aggregation type: {self.aggregation_type}.")
-            all_aggregated_message.append(tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0))
+            # try:
+            #     aggregated_message_pad = tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0)
+            # except:
+            # aggregated_message_pad = tf.keras.preprocessing.sequence.pad_sequences(aggregated_message)
+            aggregated_message_pad = aggregated_message
+            if all_aggregated_message is None:
+                all_aggregated_message = tf.expand_dims(aggregated_message_pad, 0)
+            else:
+                all_aggregated_message = tf.ragged.stack([all_aggregated_message,
+                                                          tf.expand_dims(aggregated_message_pad, 0)]).merge_dims(0, 1)
+            # all_aggregated_message.append(tf.sparse.to_dense(aggregated_message.to_sparse(), default_value=0))
 
         # type formatting
-        all_aggregated_message = tf.ragged.constant(list([each.numpy().tolist() for each in all_aggregated_message]))
+        # all_aggregated_message = tf.ragged.constant(list([each.numpy().tolist() for each in all_aggregated_message]))
+        # print(all_aggregated_message)
         return all_aggregated_message
 
     def update(self, node_representations, aggregated_messages):
@@ -184,11 +204,14 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         node_indices = edges[:, 0:1].merge_dims(0, 1)
         neighbour_indices = edges[:, 1:2].merge_dims(0, 1)
         # neighbour_representations = tf.gather(node_representations, neighbour_indices)
-        neighbour_representations = tf.ragged.constant([tf.gather(node_representations[i], neighbour_indices[i]).to_list() 
-                                                        for i in range(len(neighbour_indices.to_list()))])
+        # neighbour_representations = tf.ragged.constant([tf.gather(node_representations[i], neighbour_indices[i]).to_list()
+        #                                                 for i in range(len(neighbour_indices.to_list()))])
+        neighbour_representations = tf.ragged.stack([tf.gather(node_representation, neighbour_index)
+                                                    for node_representation, neighbour_index in
+                                                    zip(node_representations, neighbour_indices)], 0)
         neighbour_messages = self.prepare_neighbour_messages(neighbour_representations, edge_features)
 
-        number_nodes = tf.ragged.constant([len(each.numpy()) for each in node_representations])
+        number_nodes = tf.ragged.constant([len(each.to_tensor()) for each in node_representations])
         aggregated_messages = self.aggregate(node_indices, neighbour_messages, number_nodes)
 
         return self.update(node_representations, aggregated_messages)
@@ -199,20 +222,22 @@ class PaddingLayer(tf.keras.layers.Layer):
     def __init__(self, shape, custom_padding_value=None, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.custom_padding_value = custom_padding_value
-        self.shape = tf.convert_to_tensor(shape)
+        # print(type(shape))
+        self.shape = shape
     
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
     def adding_shape(self, input_shape):
         input_shape = tf.convert_to_tensor(input_shape)
-        diff = self.shape - input_shape
+        shape = tf.convert_to_tensor(self.shape)
+        diff = shape - input_shape
         condition = tf.less_equal(diff, 0)
         if tf.reduce_all(condition):
-            shape = self.shape.numpy()
+            shape = list(shape)
             shape[-2] = 0
-            return shape
-        return tf.where(condition, self.shape, diff)
+            return tf.convert_to_tensor(shape)
+        return tf.where(condition, shape, diff)
 
     def call(self, inputs):
 
@@ -261,7 +286,7 @@ class ThresholdLayer(tf.keras.layers.Layer):
         :param x:
         :return:
         """
-        return keras.backend.sigmoid(100 * (x - self.kernel))
+        return tf.keras.backend.sigmoid(100 * (x - self.kernel))
 
     def compute_output_shape(self, input_shape):
         return input_shape
@@ -274,14 +299,14 @@ class BinaryLayer(tf.keras.layers.Layer):
 
     def __init__(self, *args, **kwargs):
         super(BinaryLayer, self).__init__(*args, **kwargs)
-        self.kernel = self.add_weight(name="threshold", shape=(1,), initializer="uniform",
+        self.kernel = self.add_weight(name="thresholds", shape=(1,), initializer="uniform",
                                       trainable=True)
 
     def __call__(self, *args, **kwargs):
         return self.call(*args, **kwargs)
 
     def call(self, inputs, *args, **kwargs):
-        return keras.backend.cast(keras.backend.greater(inputs, self.kernel), keras.backend.floatx())
+        return tf.keras.backend.cast(tf.keras.backend.greater(inputs, self.kernel), tf.keras.backend.floatx())
 
 
 class RowChooserLayer(tf.keras.layers.Layer):
@@ -315,6 +340,7 @@ class RowChooserLayer(tf.keras.layers.Layer):
         raw_input, input_plus_attention = inputs[0], inputs[1]
         x = self.dense_layer(input_plus_attention)
         row_index = self.binary_maker(x)
+        print(input_plus_attention.shape)
         if return_binary_result:
             return raw_input, row_index
         return raw_input
@@ -346,9 +372,10 @@ class RowChooserLayer(tf.keras.layers.Layer):
         row_index = tf.expand_dims(row_index, -1)
         row_index = tf.repeat(row_index, repeats=raw_input.shape[-1], axis=-1)
         bool_index = tf.math.not_equal(row_index, 0.0)
-
+        print(bool_index.shape)
         attention_mask = tf.expand_dims(attention_mask, -1)
         attention_mask = tf.repeat(attention_mask, repeats=raw_input.shape[-1], axis=-1)
+        print(attention_mask.shape)
         return tf.math.logical_and(tf.math.logical_and(mask_raw_input, bool_index), attention_mask)
 
 
