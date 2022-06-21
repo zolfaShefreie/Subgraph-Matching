@@ -233,7 +233,7 @@ class PaddingLayer(tf.keras.layers.Layer):
 
         if self.custom_padding_value is None:
             min_value = tf.reduce_min(inputs)
-            padding_value = min_value - 1
+            padding_value = min_value - 0.01
         else:
             padding_value = self.custom_padding_value
 
