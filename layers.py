@@ -83,6 +83,8 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         self.aggregation_type = aggregation_type
         self.combination_type = combination_type
         self.normalize = normalize
+        self.edge_dim = edge_dim
+        self.node_dim = node_dim
         self.base_message_create = NodeEmbeddingLayer(units=hidden_units, attr_dim=node_dim,
                                                       dropout_rate=dropout_rate, name="base_message_create")
         self.edge_transformer = EdgeEmbeddingLayer(units=hidden_units, attr_dim=edge_dim,
@@ -105,7 +107,7 @@ class GNNBaseLayer(tf.keras.layers.Layer):
         :return:
         """
         messages = self.base_message_create(node_representations)
-        if edge_features is not None:
+        if edge_features is not None and self.edge_dim != 0:
             edge_representations = self.edge_transformer(edge_features)
             messages = messages * edge_representations
         return messages

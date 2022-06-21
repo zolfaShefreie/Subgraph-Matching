@@ -38,7 +38,7 @@ class GraphMatchingModel(tf.keras.models.Model):
         self.aggregator = tf.keras.layers.Bidirectional(tf.keras.layers.LSTM(lstm_units), merge_mode='ave')
         self.dot_layer = tf.keras.layers.Dot(axes=1)
         self.dense_1 = tf.keras.layers.Dense(10, activation='relu')
-        self.dense_2 = tf.keras.layers.Dense(1)
+        self.dense_2 = tf.keras.layers.Dense(1, activation='softmax')
         self.output_layer = ThresholdLayer()
 
     def __call__(self, *args, **kwargs):
@@ -118,4 +118,4 @@ class SubgraphMatchingModel(tf.keras.models.Model):
         # choose subgraph
         subgraph_embed_mask = self.subgraph_search_model.compute_mask([graph_1_embed, graph_2_embed],
                                                                       mask=[graph_1_masking, graph_2_masking])
-        return self.graph_matching_model([graph_1_embed, graph_2_embed], mask=[graph_1_masking, graph_2_masking])
+        return self.graph_matching_model([graph_1_embed, graph_2_embed], mask=[subgraph_embed_mask, graph_2_masking])
