@@ -10,5 +10,5 @@ if __name__ == '__main__':
                                                            edge_dim=dataset_obj.edge_attr_dim,
                                                            max_nodes=dataset_obj.max_graph_nodes,
                                                            node_embed_dim=32, name="SubgraphMatchingModel")
-    subgraph_matching_model.compile(optimizer='sgd', loss="categorical_crossentropy", metrics=['accuracy'], run_eagerly=True)
+    subgraph_matching_model.compile(optimizer='sgd', loss="binary_crossentropy", metrics=['accuracy'], run_eagerly=True)
     subgraph_matching_model.fit(x, y)
